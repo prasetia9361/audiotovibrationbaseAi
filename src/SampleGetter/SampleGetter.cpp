@@ -21,13 +21,15 @@ static void writeU32LE(uint8_t* buf, uint32_t val) {
 
 // ================================================================
 
-SampleGetter::SampleGetter()
-    : _labelIndex(0)
-    , _sampleCount(0)
-    , _wifiConnected(false)
-    , _btnLastState(HIGH)
-    , _btnPressTime(0)
-    , _longPressHandled(false)
+SampleGetter::SampleGetter(): 
+    _labelIndex(0),
+    _sampleCount(0),
+    _wifiConnected(false), 
+    _btnLastState(HIGH), 
+    _inputState(false),
+    _isInputagain(true),
+    _btnPressTime(0), 
+    _longPressHandled(false)
 {}
 
 // ----------------------------------------------------------------
@@ -76,32 +78,63 @@ bool SampleGetter::begin() {
 // task() — dipanggil terus dari loop()
 // ----------------------------------------------------------------
 void SampleGetter::task() {
-    bool btnNow = digitalRead(PIN_BUTTON);  // LOW = ditekan
-
-    // ---- Deteksi tombol ditekan ----
-    if (btnNow == LOW && _btnLastState == HIGH) {
-        _btnPressTime    = millis();
-        _longPressHandled = false;
-    }
-
-    // ---- Deteksi long press (tahan) ----
-    if (btnNow == LOW && !_longPressHandled) {
-        if ((millis() - _btnPressTime) >= BTN_LONG_PRESS_MS) {
-            _nextLabel();
-            _longPressHandled = true;
+    if (!_inputState)
+    {
+        if (_isInputagain) 
+        {
+            Serial.printf("Input serial: ketik angka 0 – %d lalu Enter\n", LABEL_COUNT - 1);
+            _isInputagain = false;
         }
-    }
-
-    // ---- Deteksi tombol dilepas ----
-    if (btnNow == HIGH && _btnLastState == LOW) {
-        uint32_t duration = millis() - _btnPressTime;
-        if (!_longPressHandled && duration >= BTN_DEBOUNCE_MS) {
-            // Short press → rekam dan upload
-            _recordAndUpload();
+        // ---- Input serial: ketik angka 0–(LABEL_COUNT-1) lalu Enter ----
+        if (Serial.available() > 0) {
+            String input = Serial.readStringUntil('\n');
+            input.trim();
+            if (input.length() > 0) {
+                int idx = input.toInt();
+                if (idx >= 0 && idx < LABEL_COUNT) {
+                    _inputState = true;
+                    _labelIndex = (uint8_t)idx;
+                    Serial.printf("\n[SERIAL] Label diset → \"%s\" (index %d)\n",
+                                SAMPLE_LABELS[_labelIndex], _labelIndex);
+                    _printStatus();
+                } else {
+                    Serial.printf("[SERIAL] Index tidak valid. Masukkan angka 0–%d\n",
+                                LABEL_COUNT - 1);
+                    _isInputagain = true;
+                }
+            }
         }
-    }
+    }else {
+        bool btnNow = digitalRead(PIN_BUTTON);  // LOW = ditekan
 
-    _btnLastState = btnNow;
+        // ---- Deteksi tombol ditekan ----
+        if (btnNow == LOW && _btnLastState == HIGH) {
+            _btnPressTime    = millis();
+            _longPressHandled = false;
+        }
+
+        // ---- Deteksi long press (tahan) ----
+        if (btnNow == LOW && !_longPressHandled) {
+            if ((millis() - _btnPressTime) >= BTN_LONG_PRESS_MS) {
+                // _nextLabel();
+                _inputState = false; // reset input serial
+                _isInputagain = true;
+                _longPressHandled = true;
+            }
+        }
+
+        // ---- Deteksi tombol dilepas ----
+        if (btnNow == HIGH && _btnLastState == LOW) {
+            uint32_t duration = millis() - _btnPressTime;
+            if (!_longPressHandled && duration >= BTN_DEBOUNCE_MS) {
+                // Short press → rekam dan upload
+                _recordAndUpload();
+            }
+        }
+
+        _btnLastState = btnNow;
+
+    }
 }
 
 // ----------------------------------------------------------------

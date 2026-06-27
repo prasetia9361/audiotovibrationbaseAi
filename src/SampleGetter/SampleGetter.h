@@ -12,7 +12,7 @@
 //
 // Cara pakai:
 //   - Tekan tombol SEKALI (singkat) → rekam & upload label aktif
-//   - Tahan tombol 2 detik         → ganti ke label berikutnya
+//   - Tahan tombol 2 detik         → ganti ke label berikutnya menngunakan input serial 
 //
 // Alur per tekan:
 //   [Button] → LED nyala → rekam 1 detik → LED kedip → upload WiFi
@@ -38,6 +38,8 @@ private:
 
     // ---- Button state machine ----
     bool     _btnLastState;
+    bool     _inputState;
+    bool     _isInputagain;
     uint32_t _btnPressTime;
     bool     _longPressHandled;
 
