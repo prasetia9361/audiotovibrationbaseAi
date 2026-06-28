@@ -40,8 +40,13 @@ private:
     bool     _btnLastState;
     bool     _inputState;
     bool     _isInputagain;
+    bool     _isDurationPrompted;
     uint32_t _btnPressTime;
+    float    _durationTime;
     bool     _longPressHandled;
+
+    
+    int16_t *_buffer = nullptr;
 
     // ---- Operasi utama ----
     void _recordAndUpload();

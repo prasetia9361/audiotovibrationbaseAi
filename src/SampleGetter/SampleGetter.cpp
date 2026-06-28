@@ -21,14 +21,16 @@ static void writeU32LE(uint8_t* buf, uint32_t val) {
 
 // ================================================================
 
-SampleGetter::SampleGetter(): 
+SampleGetter::SampleGetter():
     _labelIndex(0),
     _sampleCount(0),
-    _wifiConnected(false), 
-    _btnLastState(HIGH), 
+    _wifiConnected(false),
+    _btnLastState(HIGH),
     _inputState(false),
     _isInputagain(true),
-    _btnPressTime(0), 
+    _isDurationPrompted(false),
+    _btnPressTime(0),
+    _durationTime(0),
     _longPressHandled(false)
 {}
 
@@ -78,33 +80,49 @@ bool SampleGetter::begin() {
 // task() — dipanggil terus dari loop()
 // ----------------------------------------------------------------
 void SampleGetter::task() {
-    if (!_inputState)
-    {
-        if (_isInputagain) 
-        {
-            Serial.printf("Input serial: ketik angka 0 – %d lalu Enter\n", LABEL_COUNT - 1);
+    if (!_inputState) {
+        // ---- Fase 1a: input label ----
+        if (_isInputagain) {
+            Serial.printf("[INPUT] Ketik index label (0–%d) lalu Enter:\n", LABEL_COUNT - 1);
+            for (int i = 0; i < LABEL_COUNT; i++)
+                Serial.printf("  %d = %s\n", i, SAMPLE_LABELS[i]);
             _isInputagain = false;
         }
-        // ---- Input serial: ketik angka 0–(LABEL_COUNT-1) lalu Enter ----
-        if (Serial.available() > 0) {
+
+        if (!_isDurationPrompted && Serial.available() > 0) {
             String input = Serial.readStringUntil('\n');
             input.trim();
             if (input.length() > 0) {
                 int idx = input.toInt();
                 if (idx >= 0 && idx < LABEL_COUNT) {
-                    _inputState = true;
                     _labelIndex = (uint8_t)idx;
-                    Serial.printf("\n[SERIAL] Label diset → \"%s\" (index %d)\n",
-                                SAMPLE_LABELS[_labelIndex], _labelIndex);
-                    _printStatus();
+                    Serial.printf("[INPUT] Label → \"%s\". Ketik durasi rekam (100–%d ms) lalu Enter: ",
+                                  SAMPLE_LABELS[_labelIndex], SAMPLER_MAX_DURATION_MS);
+                    _isDurationPrompted = true;
                 } else {
-                    Serial.printf("[SERIAL] Index tidak valid. Masukkan angka 0–%d\n",
-                                LABEL_COUNT - 1);
+                    Serial.printf("[INPUT] Index tidak valid. Masukkan angka 0–%d\n", LABEL_COUNT - 1);
                     _isInputagain = true;
                 }
             }
         }
-    }else {
+
+        // ---- Fase 1b: input durasi ----
+        if (_isDurationPrompted && Serial.available() > 0) {
+            String input = Serial.readStringUntil('\n');
+            input.trim();
+            if (input.length() > 0) {
+                int dur = input.toInt();
+                if (dur >= 100 && dur <= (int)SAMPLER_MAX_DURATION_MS) {
+                    _durationTime = (float)dur;
+                    _inputState   = true;
+                    _printStatus();
+                } else {
+                    Serial.printf("[INPUT] Durasi tidak valid. Masukkan 100–%d ms: ", SAMPLER_MAX_DURATION_MS);
+                }
+            }
+        }
+
+    } else {
         bool btnNow = digitalRead(PIN_BUTTON);  // LOW = ditekan
 
         // ---- Deteksi tombol ditekan ----
@@ -117,8 +135,9 @@ void SampleGetter::task() {
         if (btnNow == LOW && !_longPressHandled) {
             if ((millis() - _btnPressTime) >= BTN_LONG_PRESS_MS) {
                 // _nextLabel();
-                _inputState = false; // reset input serial
-                _isInputagain = true;
+                _inputState       = false;
+                _isInputagain     = true;
+                _isDurationPrompted = false;
                 _longPressHandled = true;
             }
         }
@@ -141,31 +160,44 @@ void SampleGetter::task() {
 // Private — Rekam dan upload ke Edge Impulse
 // ----------------------------------------------------------------
 void SampleGetter::_recordAndUpload() {
-    Serial.printf("\n[REC] Label: \"%s\" — Merekam...\n", SAMPLE_LABELS[_labelIndex]);
+    Serial.printf("\n[REC] Label: \"%s\" — Merekam %.0f ms...\n",
+                  SAMPLE_LABELS[_labelIndex], _durationTime);
     _ledOn();
 
-    // 1. Rekam audio
-    if (!_audio.capture()) {
-        Serial.println("[REC] GAGAL: Error baca mikrofon");
+    size_t duration = (size_t)(AUDIO_SAMPLE_RATE * _durationTime / 1000.0f);
+
+    // Gunakan ps_malloc agar buffer dialokasikan dari PSRAM (8MB N16R8)
+    _buffer = (int16_t*)ps_malloc(sizeof(int16_t) * duration);
+    if (!_buffer) {
+        Serial.println("[REC] GAGAL: malloc gagal (RAM tidak cukup)");
         _ledBlink(5, 100);
         return;
     }
-    Serial.println("[REC] Rekaman selesai (1 detik)");
+
+    if (!_audio.capture(duration, _buffer)) {
+        Serial.println("[REC] GAGAL: Error baca mikrofon");
+        _ledBlink(5, 100);
+        free(_buffer);   // BUG 2 FIX: free di error path
+        _buffer = nullptr;
+        return;
+    }
     _ledOff();
 
-    // 2. Upload ke Edge Impulse
     Serial.println("[UPLOAD] Mengirim ke Edge Impulse...");
-    _ledBlink(2, 150); // kedip 2x saat upload
+    _ledBlink(2, 150);
 
-    bool ok = _uploadToEdgeImpulse(_audio.getBuffer(), _audio.getBufferSize());
+    bool ok = _uploadToEdgeImpulse(_buffer, _audio.getBufferSize());
+
+    free(_buffer);       // selalu free setelah selesai
+    _buffer = nullptr;
 
     if (ok) {
         _sampleCount++;
         Serial.printf("[UPLOAD] Sukses! Total sesi ini: %d sampel\n", _sampleCount);
-        _ledBlink(3, 100); // sukses: 3 kedip cepat
+        _ledBlink(3, 100);
     } else {
         Serial.println("[UPLOAD] GAGAL — coba lagi");
-        _ledBlink(5, 80);  // gagal: 5 kedip sangat cepat
+        _ledBlink(5, 80);
     }
     _printStatus();
 }
@@ -242,30 +274,63 @@ bool SampleGetter::_uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples) {
         if (!_connectWiFi()) return false;
     }
 
-    // Alokasi buffer WAV = 44 byte header + data PCM
     const size_t  pcmBytes  = numSamples * sizeof(int16_t);
     const size_t  wavSize   = 44 + pcmBytes;
-    uint8_t*      wavBuffer = (uint8_t*)malloc(wavSize);
+
+    // malloc = internal SRAM → bisa di-DMA oleh TLS (tidak seperti ps_malloc/PSRAM)
+    uint8_t* wavBuffer = (uint8_t*)malloc(wavSize);
     if (!wavBuffer) {
-        Serial.println("[UPLOAD] ERROR: malloc gagal (RAM tidak cukup)");
+        Serial.println("[UPLOAD] ERROR: malloc gagal");
         return false;
     }
 
-    // Tulis header lalu copy PCM
     _buildWavHeader(wavBuffer, (uint32_t)numSamples);
-    memcpy(wavBuffer + 44, pcmBuffer, pcmBytes);
+    memcpy(wavBuffer + 44, pcmBuffer, pcmBytes);  // CPU copy dari PSRAM → internal SRAM, aman
 
     // Kirim HTTP POST
+    if (_wifiClient.connected()) _wifiClient.stop(); // reset hanya jika ada koneksi aktif
     HTTPClient http;
     String url = String("https://") + EI_INGESTION_HOST + EI_INGESTION_URL;
     http.begin(_wifiClient, url);
 
-    http.addHeader("x-api-key",           EI_API_KEY);
-    http.addHeader("x-label",             SAMPLE_LABELS[_labelIndex]);
-    http.addHeader("x-disallow-duplicates", "0");
-    http.addHeader("Content-Type",        "audio/wav");
+    // Format: "klakson_0001.wav" — unik per sesi berdasarkan _sampleCount
+    String fileName = String(SAMPLE_LABELS[_labelIndex])
+                    + "."
+                    + String(_sampleCount)
+                    + ".wav";
 
-    int httpCode = http.POST(wavBuffer, wavSize);
+    // Bungkus WAV dalam multipart/form-data
+    // /api/training/files mengharuskan format ini
+    const char* boundary = "EIBoundary";
+
+    String partHeader = String("--") + boundary + "\r\n"
+        + "Content-Disposition: form-data; name=\"data\"; filename=\"" + fileName + "\"\r\n"
+        + "Content-Type: audio/wav\r\n\r\n";
+    String partFooter = String("\r\n--") + boundary + "--\r\n";
+
+    size_t totalSize = partHeader.length() + wavSize + partFooter.length();
+    uint8_t* multipartBuf = (uint8_t*)malloc(totalSize);
+    if (!multipartBuf) {
+        Serial.println("[UPLOAD] ERROR: malloc multipart gagal");
+        free(wavBuffer);
+        return false;
+    }
+
+    size_t off = 0;
+    memcpy(multipartBuf + off, partHeader.c_str(), partHeader.length()); off += partHeader.length();
+    memcpy(multipartBuf + off, wavBuffer, wavSize);                       off += wavSize;
+    memcpy(multipartBuf + off, partFooter.c_str(), partFooter.length());
+
+    free(wavBuffer);  // sudah di-copy ke multipartBuf, bebas duluan
+
+    http.addHeader("x-api-key",             EI_API_KEY);
+    http.addHeader("x-file-name",           fileName);
+    http.addHeader("x-label",               SAMPLE_LABELS[_labelIndex]);
+    http.addHeader("x-disallow-duplicates", "0");
+    http.addHeader("Content-Type",          String("multipart/form-data; boundary=") + boundary);
+
+    int httpCode = http.POST(multipartBuf, totalSize);
+    free(multipartBuf);
 
     bool success = false;
     if (httpCode == HTTP_CODE_OK || httpCode == 200) {
@@ -276,7 +341,6 @@ bool SampleGetter::_uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples) {
     }
 
     http.end();
-    free(wavBuffer);
     return success;
 }
 
@@ -301,6 +365,7 @@ void SampleGetter::_ledBlink(uint8_t times, uint16_t periodMs) {
 void SampleGetter::_printStatus() {
     Serial.println("┌──────────────────────────────┐");
     Serial.printf( "│ Label aktif : %-14s │\n", SAMPLE_LABELS[_labelIndex]);
+    Serial.printf( "| Duration record : %-4.0f ms     │\n", _durationTime);
     Serial.printf( "│ Upload OK   : %-4d sampel     │\n", _sampleCount);
     Serial.printf( "│ WiFi        : %-14s │\n",
         WiFi.status() == WL_CONNECTED ? "Tersambung" : "Terputus");

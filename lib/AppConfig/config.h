@@ -23,13 +23,15 @@
     #define PIN_I2S_SCK     D2
     #define PIN_I2S_WS      D1
     #define PIN_I2S_SD      D3
+
+    // ----------------------------------------------------------------
+    // PIN — LR7843 MOSFET → Motor Vibrasi 3V  (env aplikasi utama)
+    // ----------------------------------------------------------------
+
+    #define PIN_MOTOR       D0
 #endif
 
-// ----------------------------------------------------------------
-// PIN — LR7843 MOSFET → Motor Vibrasi 3V  (env aplikasi utama)
-// ----------------------------------------------------------------
 
-#define PIN_MOTOR       D0
 
 // ----------------------------------------------------------------
 // AUDIO — Pengaturan I2S dan buffer
@@ -39,6 +41,7 @@
 #define AUDIO_BUFFER_SIZE       (AUDIO_SAMPLE_RATE * AUDIO_BUFFER_MS / 1000U)
 #define AUDIO_DMA_BUF_COUNT     8
 #define AUDIO_DMA_BUF_LEN       512
+#define SAMPLER_MAX_DURATION_MS  30000U  // maks 30 detik (aman untuk PSRAM 8MB)
 
 // ----------------------------------------------------------------
 // MOTOR PWM
@@ -68,7 +71,7 @@
 // --- PIN Button ---
 #ifdef GENERIC_ESP32S3
     #define PIN_BUTTON      GPIO_NUM_13
-    #define PIN_LED         GPIO_NUM_2
+    #define PIN_LED         GPIO_NUM_18
 #else
     #define PIN_BUTTON      D6
     #define PIN_LED         LED_BUILTIN
@@ -89,7 +92,7 @@
 //   Edge Impulse Studio → project kamu → Dashboard → Keys → copy "API Key"
 #define EI_API_KEY              "ei_c097a406b1ec5f4266ba8430dd7d475390950c92c475608d"
 #define EI_INGESTION_HOST       "ingestion.edgeimpulse.com"
-#define EI_INGESTION_URL        "/api/training/data"
+#define EI_INGESTION_URL        "/api/training/files"
 
 // --- Label kelas ---
 #define LABEL_COUNT             3

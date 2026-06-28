@@ -19,6 +19,8 @@ public:
     // Blokir hingga buffer penuh. Kembalikan true jika berhasil.
     bool capture();
 
+    bool capture(size_t duration, int16_t *extbuffer);
+
     // Akses buffer hasil capture (int16, mono, AUDIO_SAMPLE_RATE Hz).
     int16_t* getBuffer();
     size_t   getBufferSize() const;
@@ -29,4 +31,5 @@ private:
     int16_t          _buffer[AUDIO_BUFFER_SIZE];   // 16.000 samples = 1 detik @16kHz
     i2s_chan_handle_t _rxChan;
     bool             _initialized;
+    size_t           _capturedSamples;  // jumlah sample aktual yang terakhir direkam
 };

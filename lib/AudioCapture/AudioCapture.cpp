@@ -4,7 +4,7 @@
 // 256 × 4 bytes = 1KB stack — aman untuk ESP32
 static const int READ_CHUNK = 256;
 
-AudioCapture::AudioCapture() : _rxChan(nullptr), _initialized(false) {
+AudioCapture::AudioCapture() : _rxChan(nullptr), _initialized(false), _capturedSamples(0) {
     memset(_buffer, 0, sizeof(_buffer));
 }
 
@@ -66,9 +66,13 @@ bool AudioCapture::capture() {
     int32_t chunk[READ_CHUNK];
     int     offset = 0;
 
+    // ESP32-S3 I2S Philips MONO: DMA buffer berisi L+R interleaved meski mode MONO.
+    // INMP441 (L/R=GND) hanya output di slot LEFT → slot RIGHT selalu 0.
+    // Solusi: baca 2× lebih banyak int32, ambil hanya indeks genap (slot LEFT).
     while (offset < (int)AUDIO_BUFFER_SIZE) {
-        int     toRead   = min(READ_CHUNK, (int)AUDIO_BUFFER_SIZE - offset);
-        size_t  bytesRead = 0;
+        int audioNeeded = (int)AUDIO_BUFFER_SIZE - offset;
+        int toRead      = min(READ_CHUNK, audioNeeded * 2); // *2: L+R interleaved
+        size_t bytesRead = 0;
 
         esp_err_t err = i2s_channel_read(
             _rxChan,
@@ -84,12 +88,54 @@ bool AudioCapture::capture() {
         }
 
         int samplesRead = (int)(bytesRead / sizeof(int32_t));
-        for (int i = 0; i < samplesRead; i++) {
-            // Ambil 18 bit teratas dari frame 32-bit INMP441
-            _buffer[offset + i] = (int16_t)(chunk[i] >> 14);
+        int audioGot = 0;
+        for (int i = 0; i < samplesRead; i += 2) { // i+=2: skip slot R (=0)
+            if (offset + audioGot < (int)AUDIO_BUFFER_SIZE)
+                _buffer[offset + audioGot++] = (int16_t)(chunk[i] >> 14);
         }
-        offset += samplesRead;
+        offset += audioGot;
     }
+    _capturedSamples = AUDIO_BUFFER_SIZE;
+    return true;
+}
+
+bool AudioCapture::capture(size_t duration, int16_t *extbuffer) {
+    if (!_initialized) return false;
+
+    // Hitung jumlah sample dari durasi (ms), clamp ke AUDIO_BUFFER_SIZE agar tidak overflow
+    size_t targetSamples = (size_t)duration;
+    if (targetSamples == 0) return false;
+
+    int32_t chunk[READ_CHUNK];
+    int     offset = 0;
+
+    while (offset < (int)targetSamples) {
+        int audioNeeded = (int)targetSamples - offset;
+        int toRead      = min(READ_CHUNK, audioNeeded * 2); // *2: L+R interleaved
+        size_t bytesRead = 0;
+
+        esp_err_t err = i2s_channel_read(
+            _rxChan,
+            chunk,
+            toRead * sizeof(int32_t),
+            &bytesRead,
+            pdMS_TO_TICKS(1000)
+        );
+
+        if (err != ESP_OK || bytesRead == 0) {
+            Serial.printf("[AudioCapture] Error baca: 0x%x\n", err);
+            return false;
+        }
+
+        int samplesRead = (int)(bytesRead / sizeof(int32_t));
+        int audioGot = 0;
+        for (int i = 0; i < samplesRead; i += 2) { // i+=2: skip slot R (=0)
+            if (offset + audioGot < (int)targetSamples)
+                extbuffer[offset + audioGot++] = (int16_t)(chunk[i] >> 14);
+        }
+        offset += audioGot;
+    }
+    _capturedSamples = (size_t)offset;
     return true;
 }
 
@@ -98,7 +144,7 @@ int16_t* AudioCapture::getBuffer() {
 }
 
 size_t AudioCapture::getBufferSize() const {
-    return AUDIO_BUFFER_SIZE;
+    return _capturedSamples;
 }
 
 bool AudioCapture::isReady() const {
