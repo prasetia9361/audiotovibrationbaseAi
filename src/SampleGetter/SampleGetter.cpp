@@ -90,14 +90,18 @@ void SampleGetter::task() {
         }
 
         if (!_isDurationPrompted && Serial.available() > 0) {
-            String input = Serial.readStringUntil('\n');
-            input.trim();
+            String input = "";
+            while (Serial.available() > 0)
+            {
+                input = Serial.readStringUntil('\n');
+                input.trim();
+            }
             if (input.length() > 0) {
                 int idx = input.toInt();
                 if (idx >= 0 && idx < LABEL_COUNT) {
                     _labelIndex = (uint8_t)idx;
                     Serial.printf("[INPUT] Label → \"%s\". Ketik durasi rekam (100–%d ms) lalu Enter: ",
-                                  SAMPLE_LABELS[_labelIndex], SAMPLER_MAX_DURATION_MS);
+                                SAMPLE_LABELS[_labelIndex], SAMPLER_MAX_DURATION_MS);
                     _isDurationPrompted = true;
                 } else {
                     Serial.printf("[INPUT] Index tidak valid. Masukkan angka 0–%d\n", LABEL_COUNT - 1);
@@ -108,8 +112,12 @@ void SampleGetter::task() {
 
         // ---- Fase 1b: input durasi ----
         if (_isDurationPrompted && Serial.available() > 0) {
-            String input = Serial.readStringUntil('\n');
-            input.trim();
+            String input = "";
+            while (Serial.available() > 0)
+            {
+                input = Serial.readStringUntil('\n');
+                input.trim();
+            }
             if (input.length() > 0) {
                 int dur = input.toInt();
                 if (dur >= 100 && dur <= (int)SAMPLER_MAX_DURATION_MS) {
@@ -288,10 +296,11 @@ bool SampleGetter::_uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples) {
     memcpy(wavBuffer + 44, pcmBuffer, pcmBytes);  // CPU copy dari PSRAM → internal SRAM, aman
 
     // Kirim HTTP POST
-    if (_wifiClient.connected()) _wifiClient.stop(); // reset hanya jika ada koneksi aktif
-    HTTPClient http;
+    // Gunakan client lokal (bukan _wifiClient member) agar tiap request fresh —
+    // menghindari stale socket dari request sebelumnya.
+    client.setInsecure();
     String url = String("https://") + EI_INGESTION_HOST + EI_INGESTION_URL;
-    http.begin(_wifiClient, url);
+    http.begin(client, url);
 
     // Format: "klakson_0001.wav" — unik per sesi berdasarkan _sampleCount
     String fileName = String(SAMPLE_LABELS[_labelIndex])

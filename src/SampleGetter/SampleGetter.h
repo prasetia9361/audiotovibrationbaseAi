@@ -31,6 +31,8 @@ public:
 private:
     AudioCapture  _audio;
     WiFiClientSecure _wifiClient;
+    HTTPClient http;
+    WiFiClientSecure client;
 
     uint8_t  _labelIndex;       // Index label aktif
     uint32_t _sampleCount;      // Jumlah sampel berhasil diupload sesi ini
