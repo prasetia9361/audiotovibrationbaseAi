@@ -12,7 +12,7 @@
 //
 // Cara pakai:
 //   - Tekan tombol SEKALI (singkat) → rekam & upload label aktif
-//   - Tahan tombol 2 detik         → ganti ke label berikutnya menngunakan input serial 
+//   - Tahan tombol 2 detik         → ganti ke label berikutnya menngunakan input serial
 //
 // Alur per tekan:
 //   [Button] → LED nyala → rekam 1 detik → LED kedip → upload WiFi
@@ -29,10 +29,7 @@ public:
     void task();
 
 private:
-    AudioCapture  _audio;
-    WiFiClientSecure _wifiClient;
-    HTTPClient http;
-    WiFiClientSecure client;
+    AudioCapture     _audio;
 
     uint8_t  _labelIndex;       // Index label aktif
     uint32_t _sampleCount;      // Jumlah sampel berhasil diupload sesi ini
@@ -47,8 +44,7 @@ private:
     float    _durationTime;
     bool     _longPressHandled;
 
-    
-    int16_t *_buffer = nullptr;
+    int16_t* _buffer = nullptr;
 
     // ---- Operasi utama ----
     void _recordAndUpload();
@@ -58,11 +54,9 @@ private:
     bool _connectWiFi();
 
     // ---- WAV builder ----
-    // Buat WAV header 44 byte dan tulis ke dst.
     void _buildWavHeader(uint8_t* dst, uint32_t numSamples);
 
     // ---- Upload ke Edge Impulse Ingestion API ----
-    // Kembalikan true jika HTTP 200.
     bool _uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples);
 
     // ---- LED feedback ----

@@ -67,9 +67,6 @@ bool SampleGetter::begin() {
         return false;
     }
 
-    // Abaikan verifikasi sertifikat SSL (cukup untuk dev)
-    _wifiClient.setInsecure();
-
     _printStatus();
     Serial.println("[SampleGetter] Siap! Tekan tombol untuk merekam.");
     _ledBlink(3, 200);
@@ -132,9 +129,11 @@ void SampleGetter::task() {
 
     } else {
         bool btnNow = digitalRead(PIN_BUTTON);  // LOW = ditekan
+        
 
         // ---- Deteksi tombol ditekan ----
         if (btnNow == LOW && _btnLastState == HIGH) {
+            Serial.printf("[BUTTON] status %d \n", btnNow);
             _btnPressTime    = millis();
             _longPressHandled = false;
         }
@@ -142,6 +141,7 @@ void SampleGetter::task() {
         // ---- Deteksi long press (tahan) ----
         if (btnNow == LOW && !_longPressHandled) {
             if ((millis() - _btnPressTime) >= BTN_LONG_PRESS_MS) {
+                Serial.printf("[BUTTON] Long press → ganti label\n");
                 // _nextLabel();
                 _inputState       = false;
                 _isInputagain     = true;
@@ -152,6 +152,7 @@ void SampleGetter::task() {
 
         // ---- Deteksi tombol dilepas ----
         if (btnNow == HIGH && _btnLastState == LOW) {
+            Serial.printf("[BUTTON] status %d \n", btnNow);
             uint32_t duration = millis() - _btnPressTime;
             if (!_longPressHandled && duration >= BTN_DEBOUNCE_MS) {
                 // Short press → rekam dan upload
@@ -160,7 +161,6 @@ void SampleGetter::task() {
         }
 
         _btnLastState = btnNow;
-
     }
 }
 
@@ -185,7 +185,7 @@ void SampleGetter::_recordAndUpload() {
     if (!_audio.capture(duration, _buffer)) {
         Serial.println("[REC] GAGAL: Error baca mikrofon");
         _ledBlink(5, 100);
-        free(_buffer);   // BUG 2 FIX: free di error path
+        free(_buffer);
         _buffer = nullptr;
         return;
     }
@@ -196,7 +196,7 @@ void SampleGetter::_recordAndUpload() {
 
     bool ok = _uploadToEdgeImpulse(_buffer, _audio.getBufferSize());
 
-    free(_buffer);       // selalu free setelah selesai
+    free(_buffer);
     _buffer = nullptr;
 
     if (ok) {
@@ -254,13 +254,13 @@ void SampleGetter::_buildWavHeader(uint8_t* dst, uint32_t numSamples) {
 
     // RIFF chunk
     memcpy(dst +  0, "RIFF", 4);
-    writeU32LE(dst +  4, 36 + DATA_SIZE);     // ChunkSize
+    writeU32LE(dst +  4, 36 + DATA_SIZE);
     memcpy(dst +  8, "WAVE", 4);
 
     // fmt sub-chunk
     memcpy(dst + 12, "fmt ", 4);
-    writeU32LE(dst + 16, 16);                 // SubchunkSize (PCM = 16)
-    writeU16LE(dst + 20, 1);                  // AudioFormat  (PCM = 1)
+    writeU32LE(dst + 16, 16);
+    writeU16LE(dst + 20, 1);
     writeU16LE(dst + 22, NUM_CHANNELS);
     writeU32LE(dst + 24, AUDIO_SAMPLE_RATE);
     writeU32LE(dst + 28, BYTE_RATE);
@@ -276,40 +276,15 @@ void SampleGetter::_buildWavHeader(uint8_t* dst, uint32_t numSamples) {
 // Private — Upload ke Edge Impulse Ingestion API via HTTPS
 // ----------------------------------------------------------------
 bool SampleGetter::_uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples) {
-    // Cek koneksi WiFi
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("[UPLOAD] WiFi terputus, coba reconnect...");
         if (!_connectWiFi()) return false;
     }
 
-    const size_t  pcmBytes  = numSamples * sizeof(int16_t);
-    const size_t  wavSize   = 44 + pcmBytes;
+    const size_t pcmBytes = numSamples * sizeof(int16_t);
+    const size_t wavSize  = 44 + pcmBytes;
 
-    // malloc = internal SRAM → bisa di-DMA oleh TLS (tidak seperti ps_malloc/PSRAM)
-    uint8_t* wavBuffer = (uint8_t*)malloc(wavSize);
-    if (!wavBuffer) {
-        Serial.println("[UPLOAD] ERROR: malloc gagal");
-        return false;
-    }
-
-    _buildWavHeader(wavBuffer, (uint32_t)numSamples);
-    memcpy(wavBuffer + 44, pcmBuffer, pcmBytes);  // CPU copy dari PSRAM → internal SRAM, aman
-
-    // Kirim HTTP POST
-    // Gunakan client lokal (bukan _wifiClient member) agar tiap request fresh —
-    // menghindari stale socket dari request sebelumnya.
-    client.setInsecure();
-    String url = String("https://") + EI_INGESTION_HOST + EI_INGESTION_URL;
-    http.begin(client, url);
-
-    // Format: "klakson_0001.wav" — unik per sesi berdasarkan _sampleCount
-    String fileName = String(SAMPLE_LABELS[_labelIndex])
-                    + "."
-                    + String(_sampleCount)
-                    + ".wav";
-
-    // Bungkus WAV dalam multipart/form-data
-    // /api/training/files mengharuskan format ini
+    String fileName   = String(SAMPLE_LABELS[_labelIndex]) + "." + _sampleCount + ".wav";
     const char* boundary = "EIBoundary";
 
     String partHeader = String("--") + boundary + "\r\n"
@@ -317,46 +292,64 @@ bool SampleGetter::_uploadToEdgeImpulse(int16_t* pcmBuffer, size_t numSamples) {
         + "Content-Type: audio/wav\r\n\r\n";
     String partFooter = String("\r\n--") + boundary + "--\r\n";
 
-    size_t totalSize = partHeader.length() + wavSize + partFooter.length();
-    uint8_t* multipartBuf = (uint8_t*)malloc(totalSize);
-    if (!multipartBuf) {
-        Serial.println("[UPLOAD] ERROR: malloc multipart gagal");
-        free(wavBuffer);
+    size_t totalBody = partHeader.length() + wavSize + partFooter.length();
+
+    // Bangun HTTP request header (stack — kecil)
+    String reqHeader = String("POST ") + EI_INGESTION_URL + " HTTP/1.1\r\n"
+        + "Host: " + EI_INGESTION_HOST + "\r\n"
+        + "x-api-key: " + EI_API_KEY + "\r\n"
+        + "x-file-name: " + fileName + "\r\n"
+        + "x-label: " + SAMPLE_LABELS[_labelIndex] + "\r\n"
+        + "x-disallow-duplicates: 0\r\n"
+        + "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n"
+        + "Content-Length: " + String(totalBody) + "\r\n"
+        + "Connection: close\r\n\r\n";
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    if (!client.connect(EI_INGESTION_HOST, 443)) {
+        Serial.println("[UPLOAD] Gagal connect TLS");
         return false;
     }
 
-    size_t off = 0;
-    memcpy(multipartBuf + off, partHeader.c_str(), partHeader.length()); off += partHeader.length();
-    memcpy(multipartBuf + off, wavBuffer, wavSize);                       off += wavSize;
-    memcpy(multipartBuf + off, partFooter.c_str(), partFooter.length());
-
-    free(wavBuffer);  // sudah di-copy ke multipartBuf, bebas duluan
-
-    http.addHeader("x-api-key",             EI_API_KEY);
-    http.addHeader("x-file-name",           fileName);
-    http.addHeader("x-label",               SAMPLE_LABELS[_labelIndex]);
-    http.addHeader("x-disallow-duplicates", "0");
-    http.addHeader("Content-Type",          String("multipart/form-data; boundary=") + boundary);
-
-    int httpCode = http.POST(multipartBuf, totalSize);
-    free(multipartBuf);
-
-    bool success = false;
-    if (httpCode == HTTP_CODE_OK || httpCode == 200) {
-        success = true;
-    } else {
-        Serial.printf("[UPLOAD] HTTP error: %d — %s\n",
-            httpCode, http.getString().c_str());
+    // Kirim HTTP header
+    client.print(reqHeader);
+    // Kirim multipart header
+    client.print(partHeader);
+    // Kirim WAV header (44 byte, stack)
+    uint8_t wavHdr[44];
+    _buildWavHeader(wavHdr, numSamples);
+    client.write(wavHdr, 44);
+    // Stream PCM dari PSRAM → chunk 4KB internal SRAM
+    const size_t CHUNK = 4096;
+    uint8_t* chunk = (uint8_t*)malloc(CHUNK);
+    if (!chunk) { client.stop(); return false; }
+    for (size_t sent = 0; sent < pcmBytes; sent += CHUNK) {
+        size_t toSend = min(CHUNK, pcmBytes - sent);
+        memcpy(chunk, (uint8_t*)pcmBuffer + sent, toSend);
+        client.write(chunk, toSend);
     }
+    free(chunk);
+    // Kirim multipart footer
+    client.print(partFooter);
 
-    http.end();
-    return success;
+    // Baca response
+    uint32_t t = millis();
+    while (!client.available() && millis() - t < 10000) delay(10);
+    String statusLine = client.readStringUntil('\n');
+    // Parse HTTP status code dari "HTTP/1.1 200 OK"
+    int code = statusLine.substring(9, 12).toInt();
+    client.stop();
+
+    if (code == 200 || code == 201) return true;
+    Serial.printf("[UPLOAD] HTTP %d: %s\n", code, statusLine.c_str());
+    return false;
 }
 
 // ----------------------------------------------------------------
 // Private — LED
 // ----------------------------------------------------------------
-void SampleGetter::_ledOn()  { digitalWrite(PIN_LED, LOW);  } // XIAO: LOW = nyala
+void SampleGetter::_ledOn()  { digitalWrite(PIN_LED, LOW);  }
 void SampleGetter::_ledOff() { digitalWrite(PIN_LED, HIGH); }
 
 void SampleGetter::_ledBlink(uint8_t times, uint16_t periodMs) {

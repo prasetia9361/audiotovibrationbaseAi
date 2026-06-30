@@ -19,10 +19,10 @@
     #define PIN_I2S_WS      GPIO_NUM_3    // I2S_MIC_LEFT_RIGHT_CLOCK
     #define PIN_I2S_SD      GPIO_NUM_4    // I2S_MIC_SERIAL_DATA
 #else
-    // Seeed XIAO ESP32-S3
-    #define PIN_I2S_SCK     D2
-    #define PIN_I2S_WS      D1
-    #define PIN_I2S_SD      D3
+    // Seeed XIAO ESP32-S3 Plus
+    #define PIN_I2S_SCK     D8
+    #define PIN_I2S_WS      D9
+    #define PIN_I2S_SD      D10
 
     // ----------------------------------------------------------------
     // PIN — LR7843 MOSFET → Motor Vibrasi 3V  (env aplikasi utama)
@@ -41,7 +41,7 @@
 #define AUDIO_BUFFER_SIZE       (AUDIO_SAMPLE_RATE * AUDIO_BUFFER_MS / 1000U)
 #define AUDIO_DMA_BUF_COUNT     8
 #define AUDIO_DMA_BUF_LEN       512
-#define SAMPLER_MAX_DURATION_MS  30000U  // maks 30 detik (aman untuk PSRAM 8MB)
+#define SAMPLER_MAX_DURATION_MS  120000U  // maks 30 detik (aman untuk PSRAM 8MB)
 
 // ----------------------------------------------------------------
 // MOTOR PWM
@@ -73,7 +73,7 @@
     #define PIN_BUTTON      GPIO_NUM_13
     #define PIN_LED         GPIO_NUM_18
 #else
-    #define PIN_BUTTON      D6
+    #define PIN_BUTTON      D3
     #define PIN_LED         LED_BUILTIN
 #endif
 
