@@ -41,7 +41,7 @@
 #define AUDIO_BUFFER_SIZE       (AUDIO_SAMPLE_RATE * AUDIO_BUFFER_MS / 1000U)
 #define AUDIO_DMA_BUF_COUNT     8
 #define AUDIO_DMA_BUF_LEN       512
-#define SAMPLER_MAX_DURATION_MS  120000U  // maks 30 detik (aman untuk PSRAM 8MB)
+#define SAMPLER_MAX_DURATION_MS  120000U  // maks 120 detik (~3.8MB @16kHz int16, aman untuk PSRAM 8MB)
 
 // ----------------------------------------------------------------
 // MOTOR PWM
@@ -53,6 +53,11 @@
 // AI CLASSIFIER
 // ----------------------------------------------------------------
 #define CONFIDENCE_THRESHOLD    0.75f
+
+// Jumlah frame berturut-turut dengan label sama (di atas threshold) yang
+// diperlukan sebelum memicu vibrasi. Mengurangi false positive dari satu
+// frame yang kebetulan lolos threshold. Set 1 untuk menonaktifkan.
+#define DETECTION_CONSECUTIVE_HITS  2
 
 #define LABEL_NOISE             0
 #define LABEL_KLAKSON           1
@@ -81,16 +86,15 @@
 #define BTN_DEBOUNCE_MS         50
 #define BTN_LONG_PRESS_MS       2000
 
-// --- WiFi ---
-// ISI sebelum upload ke ESP32!
-#define WIFI_SSID               "wefee"
-#define WIFI_PASSWORD           "wepaywefee"
+// --- Kredensial rahasia (WIFI_SSID, WIFI_PASSWORD, EI_API_KEY) ---
+// Didefinisikan di secrets.h (di-ignore git). Salin secrets.h.example
+// menjadi secrets.h lalu isi nilai asli sebelum build SAMPLER_MODE.
+#include "secrets.h"
+
+// --- WiFi (non-rahasia) ---
 #define WIFI_TIMEOUT_MS         15000
 
-// --- Edge Impulse Ingestion API ---
-// Cara dapat API Key:
-//   Edge Impulse Studio → project kamu → Dashboard → Keys → copy "API Key"
-#define EI_API_KEY              "ei_c097a406b1ec5f4266ba8430dd7d475390950c92c475608d"
+// --- Edge Impulse Ingestion API (non-rahasia) ---
 #define EI_INGESTION_HOST       "ingestion.edgeimpulse.com"
 #define EI_INGESTION_URL        "/api/training/files"
 

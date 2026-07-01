@@ -7,9 +7,7 @@
 // Uncomment baris berikut setelah library Edge Impulse ditambahkan
 // ke folder /lib. Ganti nama sesuai nama project Edge Impulse kamu.
 // ================================================================
-// #define EDGE_IMPULSE_ENABLED
-// #include <klakson-sirine-detector_inferencing.h>
-
+#define EDGE_IMPULSE_ENABLED
 // ----------------------------------------------------------------
 // Enum hasil klasifikasi
 // ----------------------------------------------------------------

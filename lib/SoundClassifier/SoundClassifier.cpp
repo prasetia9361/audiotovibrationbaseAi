@@ -3,6 +3,9 @@
 // ================================================================
 // SoundClassifier — Implementasi
 // ================================================================
+#ifdef EDGE_IMPULSE_ENABLED
+#include <klakson-sirine-detector_inferencing.h>
+#endif
 
 SoundClassifier::SoundClassifier()
     : _modelReady(false)
@@ -58,14 +61,33 @@ bool SoundClassifier::isReady() const {
 // Private — Mode Edge Impulse
 // ----------------------------------------------------------------
 #ifdef EDGE_IMPULSE_ENABLED
-ClassificationResult SoundClassifier::_runInference(int16_t* buffer, size_t size) {
-    // Bungkus buffer int16 ke format signal Edge Impulse
-    signal_t signal;
-    int err = numpy::signal_from_buffer(buffer, size, &signal);
-    if (err != 0) {
-        Serial.printf("[SoundClassifier] Error signal: %d\n", err);
-        return { SoundLabel::UNKNOWN, 0.0f };
+
+// Callback untuk konversi int16 → float yang dibutuhkan Edge Impulse SDK
+static int16_t* _ei_pcm_buf = nullptr;
+static int ei_get_audio_signal_data(size_t offset, size_t length, float* out_ptr) {
+    for (size_t i = 0; i < length; i++) {
+        out_ptr[i] = (float)_ei_pcm_buf[offset + i] / 32768.0f;
     }
+    return EIDSP_OK;
+}
+
+// Pemetaan nama label Edge Impulse → SoundLabel.
+// PENTING: dipetakan berdasarkan STRING, bukan indeks, karena urutan
+// label pada model Edge Impulse belum tentu sama dengan urutan enum
+// (mis. model bisa mengurutkan "klakson", "noise", "sirine").
+static SoundLabel _labelFromName(const char* name) {
+    if (strcmp(name, "klakson") == 0) return SoundLabel::KLAKSON;
+    if (strcmp(name, "sirine")  == 0) return SoundLabel::SIRINE;
+    if (strcmp(name, "noise")   == 0) return SoundLabel::NOISE;
+    return SoundLabel::UNKNOWN;
+}
+
+ClassificationResult SoundClassifier::_runInference(int16_t* buffer, size_t size) {
+    // Set buffer untuk callback, bungkus ke format signal Edge Impulse
+    _ei_pcm_buf = buffer;
+    signal_t signal;
+    signal.total_length = size;
+    signal.get_data     = &ei_get_audio_signal_data;
 
     // Jalankan classifier
     ei_impulse_result_t result = { 0 };
@@ -84,16 +106,19 @@ ClassificationResult SoundClassifier::_runInference(int16_t* buffer, size_t size
         );
     }
 
-    // Cari label dengan confidence tertinggi
-    float      maxVal = 0.0f;
-    SoundLabel maxLabel = SoundLabel::UNKNOWN;
+    // Cari label dengan confidence tertinggi.
+    // Petakan berdasarkan nama label (bukan indeks) agar aman terhadap
+    // perubahan urutan label saat model di-retrain.
+    float       maxVal  = 0.0f;
+    const char* maxName = nullptr;
     for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
         if (result.classification[i].value > maxVal) {
-            maxVal   = result.classification[i].value;
-            maxLabel = static_cast<SoundLabel>(i);
+            maxVal  = result.classification[i].value;
+            maxName = result.classification[i].label;
         }
     }
 
+    SoundLabel maxLabel = maxName ? _labelFromName(maxName) : SoundLabel::UNKNOWN;
     return { maxLabel, maxVal };
 }
 #endif

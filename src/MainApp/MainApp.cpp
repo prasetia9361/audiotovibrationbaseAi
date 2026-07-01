@@ -4,7 +4,11 @@
 // MainApp — Implementasi
 // ================================================================
 
-MainApp::MainApp() : _systemReady(false) {}
+MainApp::MainApp()
+    : _systemReady(false)
+    , _lastLabel(SoundLabel::UNKNOWN)
+    , _consecutiveHits(0)
+{}
 
 bool MainApp::begin() {
     Serial.begin(SERIAL_BAUD_RATE);
@@ -70,10 +74,30 @@ void MainApp::task() {
 // ----------------------------------------------------------------
 
 void MainApp::_handleResult(const ClassificationResult& result) {
-    // Abaikan jika confidence terlalu rendah atau label tidak dikenal
-    if (result.label == SoundLabel::UNKNOWN) return;
-    if (result.confidence < CONFIDENCE_THRESHOLD) return;
-    if (result.label == SoundLabel::NOISE) return;
+    // Abaikan jika confidence terlalu rendah atau label tidak dikenal.
+    // NOISE/UNKNOWN/low-confidence me-reset hitungan debounce agar deteksi
+    // hanya dipicu oleh frame relevan yang benar-benar berturut-turut.
+    if (result.label == SoundLabel::UNKNOWN ||
+        result.label == SoundLabel::NOISE   ||
+        result.confidence < CONFIDENCE_THRESHOLD) {
+        _lastLabel       = SoundLabel::UNKNOWN;
+        _consecutiveHits = 0;
+        return;
+    }
+
+    // Hitung frame berturut-turut dengan label sama
+    if (result.label == _lastLabel) {
+        _consecutiveHits++;
+    } else {
+        _lastLabel       = result.label;
+        _consecutiveHits = 1;
+    }
+
+    // Belum cukup konsisten → tunggu frame berikutnya
+    if (_consecutiveHits < DETECTION_CONSECUTIVE_HITS) return;
+
+    // Sudah terpicu → reset agar tidak spam getar tiap frame berikutnya
+    _consecutiveHits = 0;
 
     // Log ke Serial
     Serial.printf("[MainApp] Terdeteksi: %s (%.0f%%)\n",

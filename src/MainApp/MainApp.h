@@ -31,6 +31,11 @@ private:
 
     bool _systemReady;
 
+    // Debounce deteksi: butuh beberapa frame berturut-turut dengan
+    // label sama sebelum memicu vibrasi.
+    SoundLabel _lastLabel;
+    uint8_t    _consecutiveHits;
+
     // Respons terhadap hasil klasifikasi
     void _handleResult(const ClassificationResult& result);
 
